@@ -1,18 +1,17 @@
 import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Track, TrackDocument } from './schemas/track.schema';
-import { Comment } from './schemas/comment.schema';
-import { Model, ObjectId, Types } from 'mongoose';
-import { CommentDocument } from './schemas/comment.schema';
+import { InjectModel } from '@nestjs/sequelize';
+import { Track } from './models/track.model';
+import { Comment } from './models/comment.model';
 import { CreateTrackDto } from './dto/create-track.dto';
 import { CreateCommentDto } from './dto/create-comment.dto';
 import { FileService, FileType } from 'src/file/file.service';
+import { Op } from 'sequelize';
 
 @Injectable()
 export class TrackService {
   constructor(
-    @InjectModel(Track.name) private trackModel: Model<TrackDocument>,
-    @InjectModel(Comment.name) private commentModel: Model<CommentDocument>,
+    @InjectModel(Track) private trackModel: typeof Track,
+    @InjectModel(Comment) private commentModel: typeof Comment,
     private fileService: FileService
   ) {}
 
@@ -31,48 +30,50 @@ export class TrackService {
   }
 
   async getAll(count = 50, offset = 0): Promise<Track[]> {
-    const tracks = await this.trackModel.find().skip(offset).limit(count);
+    const tracks = await this.trackModel.findAll({ offset, limit: count });
 
     return tracks;
   }
 
   async search(query: string): Promise<Track[]> {
-    const tracks = await this.trackModel.find({
-      name: { $regex: new RegExp(query, 'i') },
+    const tracks = await this.trackModel.findAll({
+      where: { name: { [Op.iLike]: `%${query}%` } },
     });
 
     return tracks;
   }
 
-  async getOne(id: ObjectId): Promise<Track> {
-    const track = (await this.trackModel.findById(id)).populate('comments');
+  async getOne(id: number): Promise<Track> {
+    const track = await this.trackModel.findByPk(id, { include: [Comment] });
 
     return track;
   }
 
-  async delete(id: ObjectId): Promise<Types.ObjectId> {
-    const track = await this.trackModel.findByIdAndDelete(id);
+  async delete(id: number): Promise<number> {
+    const track = await this.trackModel.findByPk(id);
 
-    this.fileService.removeFile(track.audio);
-    this.fileService.removeFile(track.picture);
+    await this.fileService.removeFile(track.audio);
+    await this.fileService.removeFile(track.picture);
 
-    return track._id;
+    await track.destroy();
+
+    return id;
   }
 
   async addComment(dto: CreateCommentDto): Promise<Comment> {
-    const track = await this.trackModel.findById(dto.trackId);
+    const track = await this.trackModel.findByPk(dto.trackId);
     const comment = await this.commentModel.create({ ...dto });
 
-    track.comments.push(comment.id);
+    track.comments.push(comment);
     await track.save();
 
     return comment;
   }
 
-  async listen(id: ObjectId) {
-    const track = await this.trackModel.findById(id);
+  async listen(id: number) {
+    const track = await this.trackModel.findByPk(id);
 
     track.listens++;
-    track.save();
+    await track.save();
   }
 }
